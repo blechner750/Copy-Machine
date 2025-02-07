@@ -10,7 +10,7 @@ Together this is an end-to-end system meant to copy trades from a MetaTrader 5 t
 
 - Automated trade execution
 - Automated trade modification
-- Periodic browser refresh to prevent memory issues
+- Fallbacks in the event the browser crashed or doesn't respond correctly
 - Click button interactions based on availability
 - Logic to ensure all buttons are available upon request
 
