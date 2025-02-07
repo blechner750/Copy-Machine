@@ -20,52 +20,96 @@ trade_map = {}  # Dictionary to store {MT5_ticket: Web_terminal_ticket}
 
 # Function to start browser and login
 def initialize_browser():
-    global driver
-    driver = webdriver.Chrome() 
+    global driver   
     
     # This code will allow you to use Chrome Profile in the browser
     #chrome_options = Options()
     #chrome_options.add_argument("user-data-dir=") # Input User Data Directory
-    #chrome_options.add_argument("profile-directory=Default")  # Change to the profile you use
-    #service = Service("C:/chrome/chromedriver.exe")  # Ensure this path is correct
+    #chrome_options.add_argument("profile-directory=Default") # Change to the profile you use
+    #service = Service("") # Ensure this path is correct
     #driver = webdriver.Chrome(service=service, options=chrome_options)
-    #driver.get("") # Input URL for driver to get
+    #driver.get("")
     
-    # This code will allow you to login using credentials
-    driver.get("") # Input URL for driver to get
+    # Otherwise we launch a window and perform credential input
+    driver = webdriver.Chrome() 
+    driver.get("")
     driver.implicitly_wait(10)
-    username_field = driver.find_element(By.CSS_SELECTOR, "input[type='email']")
-    username_field.send_keys("") # Input Email
-    password_field = driver.find_element(By.CSS_SELECTOR, "[data-testid='password-field']")
-    password_field.send_keys("") # Input Password
-    login_button = driver.find_element(By.CSS_SELECTOR, ".engine-button--center.engine-button--secondary")
-    login_button.click()
+    perform_login() 
+    
+    # Make sure menu is open and confirmations turned off
     ensure_trade_menu()
     ensure_trade_confirmations_off()
+    
+def perform_login():
+    try:
+        wait = WebDriverWait(driver, 10)
+        # Wait for and locate the login fields
+        username_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']")))
+        password_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='password-field']")))
+
+        username_field.send_keys("")
+        password_field.send_keys("")
+        
+        login_button = driver.find_element(By.CSS_SELECTOR, ".engine-button--center.engine-button--secondary")
+        login_button.click()
+        
+        # Wait for the user menu to appear as a sign of successful login
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "navbar-UserMenuButton"))
+        )
+        print("Login successful.")
+    except Exception as e:
+        print(f"Error during login: {e}") 
  
-# Function to refresh browser (due to memory issues on Chrome) 
-def periodic_refresh():
-    while True:
-        time.sleep(REFRESH_INTERVAL)
-        try:
-            print("Refreshing browser to free memory...")
-            driver.refresh()
-            ensure_trade_menu()
-            ensure_trade_confirmations_off()
-        except Exception as e:
-            print(f"Error refreshing browser: {e}")
+# Runs a browser refresh, logs in if necessary, and ensures menu and confirmation status 
+def refresh_browser():
+    try:
+        print("Refreshing browser...")
+        driver.refresh()
+        time.sleep(5)
+        
+        # Check if login is required by looking for the login field.
+        # If the list is non-empty, login fields are present.
+        login_fields = driver.find_elements(By.CSS_SELECTOR, "input[type='email']")
+        if login_fields:
+            print("Login fields detected; performing login.")
+            perform_login()
+        else:
+            print("Login not required; already logged in.")
+        
+        # Confirm the browser is operational by waiting for the user menu button.
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "navbar-UserMenuButton"))
+        )
+        ensure_trade_menu()
+        ensure_trade_confirmations_off()
+        print("Browser refreshed and operational.")
+    except Exception as e:
+        print(f"Error refreshing browser: {e}")
+
+# Checks browser status by looking for User Menu Button
+def is_browser_operational():
+    try:
+        # Use a short wait to confirm the element is present
+        user_menu_button = WebDriverWait(driver, 3).until(
+            EC.presence_of_element_located((By.ID, "navbar-UserMenuButton"))
+        )
+        return user_menu_button.is_displayed()
+    except Exception as e:
+        print(f"Browser operational check failed: {e}")
+        return False        
 
 # Opens Trade Menu       
 def ensure_trade_menu():
-    try:
-        # Check if the NewOrder button is present (indicating the menu is closed)
-        WebDriverWait(driver, 3).until(
-            EC.presence_of_element_located((By.ID, "MarketWatch-NewOrder"))
-        )
+    # Look for elements with the ID "MarketWatch-NewOrder"
+    new_order_buttons = driver.find_elements(By.ID, "MarketWatch-NewOrder")
+    
+    # If at least one is found and it is visible, the trade menu is closed.
+    if new_order_buttons and new_order_buttons[0].is_displayed():
         print("Trade menu is not open. Reopening...")
-        openTradeMenu()  # Open the trade menu if it's not already open
-    except TimeoutException:
-        pass
+        openTradeMenu() 
+    else:
+        print("Trade menu is already open.")
 
 # Helper to expose Trade Menu buttons    
 def openTradeMenu():  
@@ -94,8 +138,9 @@ def ensure_trade_confirmations_off():
         # Find the input checkbox by the 'for' attribute that corresponds to the label's 'id'
         checkbox = driver.find_element(By.XPATH, f"//input[@type='checkbox' and @id='{trade_confirm_label.get_attribute('for')}']")
 
-        if not checkbox.is_selected():
-            actions = ActionChains(driver)
+        # Check the value attribute to determine if it's checked
+        checkbox_value = checkbox.get_attribute("value")
+        if checkbox_value.lower() != "true":
             actions.move_to_element(checkbox).click().perform()
             print("Trade confirmations disabled.")
         else:
@@ -104,17 +149,16 @@ def ensure_trade_confirmations_off():
         # Step 4: Click close button
         close_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@class, 'engine-dialog-header__icon-button')]")))
         close_button.click()
-        print("Settings menu closed.")
 
     except TimeoutException:
         print("Failed to locate an element in the settings menu.")
 
-
-# Function to perform the Trade
+# Master Trade Function, to input values and click trade button
 def click_trade(data):
     try:
-        # Pull trade direction (buy or sell)
-        direction = data.get("direction", "").upper()  # Ensure uppercase for consistency
+        ensure_trade_menu() # just be certain
+        
+        direction = data.get("direction", "").upper()  # Ensure uppercase ("BUY" or "SELL")
         mt5_ticket = data['ticket']
 
         # Identify the correct button based on trade direction
@@ -126,29 +170,53 @@ def click_trade(data):
             print(f"Invalid trade direction: {direction}")
             return {"error": "Invalid trade direction"}
 
-        # Wait for the button to be clickable
+        # Wait for the button to be clickable and click it
         button = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.CSS_SELECTOR, button_selector))
         )
-
-        # Click the button
         ActionChains(driver).move_to_element(button).click().perform()
         print(f"Successfully clicked {direction} button.")
-        
-        # Retreive browser trade tickets
-        trade_ids = get_open_trade_ids()
 
-        # Find the newly created trade by checking for an unmatched ID
+        # Attempt to retrieve open trade tickets
+        try:
+            trade_ids = get_open_trade_ids()
+        except Exception as e:
+            print(f"Error retrieving open trade IDs: {e}")
+            trade_ids = []
+
+        # Look for a new trade ticket that is not already mapped
+        new_trade_id = None
         for trade_id in trade_ids:
-            if mt5_ticket not in trade_map:
-                trade_map[mt5_ticket] = trade_id
-                print(f"Mapped MT5 ticket {mt5_ticket} to browser trade ID {trade_id}")
-            else:
-                print(f"MT5 ticket {mt5_ticket} already mapped to browser trade ID {trade_map[mt5_ticket]}")
+            if trade_id not in trade_map.values():
+                new_trade_id = trade_id
+                break
 
-        # Make sure trade menu is still open, and return
-        ensure_trade_menu()
-        return {"status": "success", "action": direction, "trade_id": trade_id}
+        # If a new ticket is not found, refresh the browser and try again
+        if not new_trade_id:
+            print("New trade not detected. Refreshing browser and retrying...")
+            refresh_browser()
+            time.sleep(2)  # Allow time for the table to update
+
+            try:
+                trade_ids = get_open_trade_ids()
+            except Exception as e:
+                print(f"Error retrieving open trade IDs after refresh: {e}")
+                trade_ids = []
+
+            for trade_id in trade_ids:
+                if trade_id not in trade_map.values():
+                    new_trade_id = trade_id
+                    break
+
+            # If still no new ticket found, return an error response
+            if not new_trade_id:
+                return {"error": "Failed to retrieve new trade ticket after browser refresh."}
+
+        # Map the MT5 ticket to the new browser trade ID
+        trade_map[mt5_ticket] = new_trade_id
+        print(f"Mapped MT5 ticket {mt5_ticket} to browser trade ID {new_trade_id}")
+
+        return {"status": "success", "action": direction, "trade_id": new_trade_id}
 
     except Exception as e:
         print(f"Error clicking {direction} button: {e}")
@@ -224,19 +292,18 @@ def input_tp(tp_value):
 
     # Input the TP value
     tp_input.send_keys(str(tp_value))
-
-# Function to query the Open Position table and retreive trade tickets    
+        
+# Function to query the Open Position table and retreive trade tickets     
 def get_open_trade_ids():
     try:
         # Locate the open positions container
         container = driver.find_element(By.XPATH, "//mtr-open-positions-desktop[contains(@class, 'open-positions-desktop')]")
-        
         # Find the overflow container that holds the trades
         overflow_container = container.find_element(By.CLASS_NAME, "engine-list--overflow")
-
-        # Slight Pause until table has new entries
+        
+        # Wait until the number of trade elements is greater than the number of mapped trades.
         WebDriverWait(driver, 10).until(
-            lambda driver: len(overflow_container.find_elements(By.TAG_NAME, "engine-list-element")) > len(trade_map)
+            lambda d: len(overflow_container.find_elements(By.TAG_NAME, "engine-list-element")) > len(trade_map)
         )
         
         # Get all trade elements
@@ -246,18 +313,21 @@ def get_open_trade_ids():
         trade_data = []
         for trade in trade_elements:
             try:
-                # Locate ticket ID within the trade element
-                ticket_element = trade.find_element(By.XPATH, ".//*[contains(@class, 'bottom-section-table__position-id')]")
+                # Locate ticket ID within the trade element (note the correct class with double underscores)
+                ticket_element = trade.find_element(By.XPATH, ".//div[contains(@class, 'bottom-section-table__position-id')]")
                 ticket_id = ticket_element.text.strip()
                 trade_data.append(ticket_id)
             except NoSuchElementException:
                 print("Warning: Could not find ticket ID for a trade entry")
-
+        
         return trade_data
 
-    except NoSuchElementException:
-        print("Error: Could not locate trade list container")
+    except NoSuchElementException as e:
+        print(f"Error: Could not locate trade list container: {e}")
         return []
+    except TimeoutException as e:
+        print(f"Error: Timeout while waiting for trade elements to load: {e}")
+        return []        
 
 # Function that handles Trade Modifications (change of TP or SL)       
 def handle_modify(data):
@@ -338,7 +408,6 @@ def handle_modify(data):
             save_button.click()
             print(f"Updated SL for trade {ticket_id} to {new_sl}")
 
-        ensure_trade_menu()
         return f"Successfully updated TP and/or SL for trade {ticket_id}."
 
     except NoSuchElementException:
@@ -367,7 +436,11 @@ def handle_trade(data):
 # Function that holds logic for the server POST requests
 @app.route('/api/trades', methods=['POST'])
 def handle_trades():
-    try:
+    try: 
+        # Quick check to make sure browser didn't crash
+        if not is_browser_operational():
+            refresh_browser()
+        
         # Attempt to get the JSON data from the request
         data = request.get_json()
 
@@ -400,6 +473,4 @@ def handle_trades():
 # Launchs the server and initialzes browser
 if __name__ == '__main__':
     initialize_browser()
-    refresh_thread = threading.Thread(target=periodic_refresh, daemon=True)
-    refresh_thread.start()
     app.run(host="0.0.0.0", port=5000)
